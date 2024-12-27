@@ -1,4 +1,4 @@
-import type { Page } from 'puppeteer'
+import type { Page } from 'puppeteer-core'
 import { type ClickOptions, createCursor, GhostCursor } from '../spoof'
 import { join } from 'path'
 import { promises as fs } from 'fs'
