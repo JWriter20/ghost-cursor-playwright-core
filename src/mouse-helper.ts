@@ -1,11 +1,11 @@
-import type { Page } from 'puppeteer-core'
+import type { Page } from 'patchright-core'
 
 /**
  * This injects a box into the page that moves with the mouse.
  * Useful for debugging.
  */
 async function installMouseHelper (page: Page): Promise<void> {
-  await page.evaluateOnNewDocument(() => {
+  await page.addInitScript(() => {
     const attachListener = (): void => {
       const box = document.createElement('p-mouse-pointer')
       const styleElement = document.createElement('style')
@@ -47,17 +47,17 @@ async function installMouseHelper (page: Page): Promise<void> {
           border-color: rgba(0,255,0,0.9);
         }
         p-mouse-pointer-hide {
-          display: none
+          display: none;
         }
       `
       document.head.appendChild(styleElement)
       document.body.appendChild(box)
+
       document.addEventListener(
         'mousemove',
         (event) => {
-          console.log('event')
-          box.style.left = String(event.pageX) + 'px'
-          box.style.top = String(event.pageY) + 'px'
+          box.style.left = `${event.pageX}px`
+          box.style.top = `${event.pageY}px`
           box.classList.remove('p-mouse-pointer-hide')
           updateButtons(event.buttons)
         },
@@ -67,7 +67,7 @@ async function installMouseHelper (page: Page): Promise<void> {
         'mousedown',
         (event) => {
           updateButtons(event.buttons)
-          box.classList.add('button-' + String(event.which))
+          box.classList.add(`button-${event.which}`)
           box.classList.remove('p-mouse-pointer-hide')
         },
         true
@@ -76,33 +76,33 @@ async function installMouseHelper (page: Page): Promise<void> {
         'mouseup',
         (event) => {
           updateButtons(event.buttons)
-          box.classList.remove('button-' + String(event.which))
+          box.classList.remove(`button-${event.which}`)
           box.classList.remove('p-mouse-pointer-hide')
         },
         true
       )
       document.addEventListener(
         'mouseleave',
-        (event) => {
-          updateButtons(event.buttons)
+        () => {
           box.classList.add('p-mouse-pointer-hide')
         },
         true
       )
       document.addEventListener(
         'mouseenter',
-        (event) => {
-          updateButtons(event.buttons)
+        () => {
           box.classList.remove('p-mouse-pointer-hide')
         },
         true
       )
-      function updateButtons (buttons): void {
+
+      function updateButtons (buttons: number): void {
         for (let i = 0; i < 5; i++) {
-          box.classList.toggle('button-' + String(i), Boolean(buttons & (1 << i)))
+          box.classList.toggle(`button-${i}`, Boolean(buttons & (1 << i)))
         }
       }
     }
+
     if (document.readyState !== 'loading') {
       attachListener()
     } else {

@@ -1,4 +1,4 @@
-import type { ElementHandle, Page, BoundingBox, CDPSession, Protocol } from 'puppeteer-core'
+import type { ElementHandle, Page, CDPSession } from 'patchright-core'
 import debug from 'debug'
 import {
   type Vector,
@@ -14,109 +14,54 @@ export { default as installMouseHelper } from './mouse-helper'
 
 const log = debug('ghost-cursor')
 
+export interface BoundingBox {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
 export interface BoxOptions {
-  /**
-   * Percentage of padding to be added inside the element.
-   * Example:
-   * - `0` = may be anywhere within the element.
-   * - `100` = will always be center of element.
-   * @default 0
-   */
   readonly paddingPercentage?: number
 }
 
 export interface MoveOptions extends BoxOptions, Pick<PathOptions, 'moveSpeed'> {
-  /**
-   * Time to wait for the selector to appear in milliseconds.
-   * Default is to not wait for selector.
-   */
   readonly waitForSelector?: number
-  /**
-   * Delay after moving the mouse in milliseconds. If `randomizeMoveDelay=true`, delay is randomized from 0 to `moveDelay`.
-   * @default 0
-   */
   readonly moveDelay?: number
-  /**
-   * Randomize delay between actions from `0` to `moveDelay`. See `moveDelay` docs.
-   * @default true
-   */
   readonly randomizeMoveDelay?: boolean
-  /**
-   * Maximum number of attempts to mouse-over the element.
-   * @default 10
-   */
   readonly maxTries?: number
-  /**
-   * Distance from current location to destination that triggers overshoot to
-   * occur. (Below this distance, no overshoot will occur).
-   * @default 500
-   */
   readonly overshootThreshold?: number
 }
 
 export interface ClickOptions extends MoveOptions {
-  /**
-   * Delay before initiating the click action in milliseconds.
-   * @default 0
-   */
   readonly hesitate?: number
-  /**
-   * Delay between mousedown and mouseup in milliseconds.
-   * @default 0
-   */
   readonly waitForClick?: number
-  /**
-   * @default 2000
-   */
   readonly moveDelay?: number
 }
 
 export interface PathOptions {
-  /**
-   * Override the spread of the generated path.
-   */
   readonly spreadOverride?: number
-  /**
-   * Speed of mouse movement.
-   * Default is random.
-   */
   readonly moveSpeed?: number
-
-  /**
-   * Generate timestamps for each point in the path.
-   */
   readonly useTimestamps?: boolean
 }
 
 export interface RandomMoveOptions extends Pick<MoveOptions, 'moveDelay' | 'randomizeMoveDelay' | 'moveSpeed'> {
-  /**
-   * @default 2000
-   */
   readonly moveDelay?: number
 }
 
 export interface MoveToOptions extends PathOptions, Pick<MoveOptions, 'moveDelay' | 'randomizeMoveDelay'> {
-  /**
-   * @default 0
-   */
   readonly moveDelay?: number
 }
 
 export interface GhostCursor {
   toggleRandomMove: (random: boolean) => void
-  click: (
-    selector?: string | ElementHandle,
-    options?: ClickOptions
-  ) => Promise<void>
-  move: (
-    selector: string | ElementHandle,
-    options?: MoveOptions
-  ) => Promise<void>
+  click: (selector?: string | ElementHandle, options?: ClickOptions) => Promise<void>
+  move: (selector: string | ElementHandle, options?: MoveOptions) => Promise<void>
   moveTo: (destination: Vector, options?: MoveToOptions) => Promise<void>
   getLocation: () => Vector
 }
 
-/** Helper function to wait a specified number of milliseconds  */
+/** Helper function to wait a specified number of milliseconds */
 const delay = async (ms: number): Promise<void> => {
   if (ms < 1) return
   return await new Promise((resolve) => setTimeout(resolve, ms))
@@ -144,8 +89,8 @@ const getRandomBoxPoint = (
 
   if (
     options?.paddingPercentage !== undefined &&
-    options?.paddingPercentage > 0 &&
-    options?.paddingPercentage <= 100
+    options.paddingPercentage > 0 &&
+    options.paddingPercentage <= 100
   ) {
     paddingWidth = (width * options.paddingPercentage) / 100
     paddingHeight = (height * options.paddingPercentage) / 100
@@ -157,80 +102,72 @@ const getRandomBoxPoint = (
   }
 }
 
-/** The function signature to access the internal CDP client changed in puppeteer 14.4.1 */
-const getCDPClient = (page: any): CDPSession => typeof page._client === 'function' ? page._client() : page._client
+/** Updated helper to create a CDP session in Playwright */
+const getCDPClient = async (page: Page): Promise<CDPSession> => {
+  return await page.context().newCDPSession(page)
+}
 
-/** Get a random point on a browser window */
+/** Get a random point on a browser page using viewport size instead of CDP target */
 export const getRandomPagePoint = async (page: Page): Promise<Vector> => {
-  const targetId: string = (page.target() as any)._targetId
-  const window = await getCDPClient(page).send(
-    'Browser.getWindowForTarget',
-    { targetId }
-  )
+  const viewport = page.viewportSize()
+  if (viewport == null) {
+    throw new Error('No viewport available')
+  }
   return getRandomBoxPoint({
-    x: origin.x,
-    y: origin.y,
-    width: window.bounds.width ?? 0,
-    height: window.bounds.height ?? 0
+    x: 0,
+    y: 0,
+    width: viewport.width,
+    height: viewport.height
   })
 }
 
-/** Using this method to get correct position of Inline elements (elements like `<a>`) */
+/** Get the bounding box of an element. Uses getClientRects as a first try. */
 const getElementBox = async (
   page: Page,
-  element: ElementHandle,
+  element: ElementHandle<Element>,
   relativeToMainFrame: boolean = true
 ): Promise<BoundingBox | null> => {
-  const objectId = element.remoteObject().objectId
-  if (objectId === undefined) {
-    return null
-  }
-
   try {
-    const quads = await getCDPClient(page).send('DOM.getContentQuads', {
-      objectId
+    const quads = await element.evaluate((el) => {
+      const rects = el.getClientRects()
+      if (rects.length > 0) {
+        const rect = rects[0]
+        return [rect.left, rect.top, rect.right, rect.bottom]
+      }
+      return null
     })
-    const elementBox = {
-      x: quads.quads[0][0],
-      y: quads.quads[0][1],
-      width: quads.quads[0][4] - quads.quads[0][0],
-      height: quads.quads[0][5] - quads.quads[0][1]
-    }
-    if (!relativeToMainFrame) {
-      const elementFrame = await element.contentFrame()
-      const iframes =
-        elementFrame != null
-          ? await elementFrame.parentFrame()?.$$('xpath/.//iframe')
-          : null
-      let frame: ElementHandle<Node> | undefined
-      if (iframes != null) {
-        for (const iframe of iframes) {
-          if ((await iframe.contentFrame()) === elementFrame) frame = iframe
+    if (quads != null) {
+      const elementBox: BoundingBox = {
+        x: quads[0],
+        y: quads[1],
+        width: quads[2] - quads[0],
+        height: quads[3] - quads[1]
+      }
+      if (!relativeToMainFrame) {
+        const elementFrame = await element.contentFrame()
+        if (elementFrame != null) {
+          const frameElement = await elementFrame.frameElement()
+          const boundingBox = await frameElement.boundingBox()
+          if (boundingBox != null) {
+            elementBox.x = elementBox.x - boundingBox.x
+            elementBox.y = elementBox.y - boundingBox.y
+          }
         }
       }
-      if (frame != null) {
-        const boundingBox = await frame.boundingBox()
-        elementBox.x =
-          boundingBox !== null ? elementBox.x - boundingBox.x : elementBox.x
-        elementBox.y =
-          boundingBox !== null ? elementBox.y - boundingBox.y : elementBox.y
-      }
+      return elementBox
     }
-
-    return elementBox
   } catch (_) {
-    log('Quads not found, trying regular boundingBox')
-    return await element.boundingBox()
+    log('Could not get client rects, falling back to boundingBox')
   }
+  return await element.boundingBox()
 }
 
-export function path (point: Vector, target: Vector, options?: number | PathOptions)
-export function path (point: Vector, target: BoundingBox, options?: number | PathOptions)
-export function path (start: Vector, end: BoundingBox | Vector, options?: number | PathOptions): Vector[] | TimedVector[] {
+export function path(point: Vector, target: Vector, options?: number | PathOptions): Vector[] | TimedVector[]
+export function path(point: Vector, target: BoundingBox, options?: number | PathOptions): Vector[] | TimedVector[]
+export function path(start: Vector, end: BoundingBox | Vector, options?: number | PathOptions): Vector[] | TimedVector[] {
   const optionsResolved: PathOptions = typeof options === 'number'
     ? { spreadOverride: options }
     : { ...options }
-
   const DEFAULT_WIDTH = 100
   const MIN_STEPS = 25
   const width = 'width' in end && end.width !== 0 ? end.width : DEFAULT_WIDTH
@@ -306,11 +243,8 @@ const boundingBoxWithFallback = async (
 ): Promise<BoundingBox> => {
   let box = await getElementBox(page, elem)
   if (box == null) {
-    box = (await elem.evaluate((el: Element) =>
-      el.getBoundingClientRect()
-    )) as BoundingBox
+    box = (await elem.evaluate((el: Element) => el.getBoundingClientRect())) as BoundingBox
   }
-
   return box
 }
 
@@ -323,34 +257,17 @@ export const createCursor = (
   start: Vector = origin,
   /**
    * Initially perform random movements.
-   * If `move`,`click`, etc. is performed, these random movements end.
+   * If `move`, `click`, etc. is performed, these random movements end.
    * @default false
    */
   performRandomMoves: boolean = false,
   defaultOptions: {
-    /**
-     * Default options for the `randomMove` function that occurs when `performRandomMoves=true`
-     * @default RandomMoveOptions
-     */
     randomMove?: RandomMoveOptions
-    /**
-     * Default options for the `move` function
-     * @default MoveOptions
-     */
     move?: MoveOptions
-    /**
-     * Default options for the `moveTo` function
-     * @default MoveToOptions
-     */
     moveTo?: MoveToOptions
-    /**
-     * Default options for the `click` function
-     * @default ClickOptions
-     */
     click?: ClickOptions
   } = {}
 ): GhostCursor => {
-  // this is kind of arbitrary, not a big fan but it seems to work
   const OVERSHOOT_SPREAD = 10
   const OVERSHOOT_RADIUS = 120
   let previous: Vector = start
@@ -363,42 +280,44 @@ export const createCursor = (
     vectors: Iterable<Vector | TimedVector>,
     abortOnMove: boolean = false
   ): Promise<void> => {
-    const cdpClient = getCDPClient(page)
+    const cdpClient = await getCDPClient(page)
 
     for (const v of vectors) {
       try {
-        // In case this is called from random mouse movements and the users wants to move the mouse, abort
+        // Abort if random movements are running and a new move is triggered
         if (abortOnMove && moving) {
           return
         }
 
-        const dispatchParams: Protocol.Input.DispatchMouseEventRequest = {
+        const dispatchParams: any = {
           type: 'mouseMoved',
           x: v.x,
           y: v.y
         }
 
-        if ('timestamp' in v) dispatchParams.timestamp = v.timestamp
+        if ('timestamp' in v) {
+          dispatchParams.timestamp = v.timestamp
+        }
 
         await cdpClient.send('Input.dispatchMouseEvent', dispatchParams)
-
         previous = v
       } catch (error) {
-        // Exit function if the browser is no longer connected
-        if (!page.browser().isConnected()) return
+        // Exit function if the page is closed
+        if (page.isClosed()) return
 
         log('Warning: could not move mouse, error message:', error)
       }
     }
   }
-  // Start random mouse movements. Function recursively calls itself
+
+  // Start random mouse movements (recursive)
   const randomMove = async (options?: RandomMoveOptions): Promise<void> => {
-    const optionsResolved = {
+    const optionsResolved: RandomMoveOptions = {
       moveDelay: 2000,
       randomizeMoveDelay: true,
       ...defaultOptions?.randomMove,
       ...options
-    } satisfies RandomMoveOptions
+    }
 
     try {
       if (!moving) {
@@ -406,37 +325,34 @@ export const createCursor = (
         await tracePath(path(previous, rand, optionsResolved), true)
         previous = rand
       }
-      await delay(optionsResolved.moveDelay * (optionsResolved.randomizeMoveDelay ? Math.random() : 1))
-      randomMove(options).then(
-        (_) => { },
-        (_) => { }
-      ) // fire and forget, recursive function
+      await delay((optionsResolved.moveDelay ?? 0) * ((optionsResolved.randomizeMoveDelay ?? false) ? Math.random() : 1))
+      randomMove(options).catch(() => { })
     } catch (_) {
       log('Warning: stopping random mouse movements')
     }
   }
 
   const actions: GhostCursor = {
-    toggleRandomMove (random: boolean): void {
+    toggleRandomMove(random: boolean): void {
       moving = !random
     },
 
-    getLocation (): Vector {
+    getLocation(): Vector {
       return previous
     },
 
-    async click (
+    async click(
       selector?: string | ElementHandle,
       options?: ClickOptions
     ): Promise<void> {
-      const optionsResolved = {
+      const optionsResolved: ClickOptions = {
         moveDelay: 2000,
         hesitate: 0,
         waitForClick: 0,
         randomizeMoveDelay: true,
         ...defaultOptions?.click,
         ...options
-      } satisfies ClickOptions
+      }
 
       const wasRandom = !moving
       actions.toggleRandomMove(false)
@@ -444,42 +360,41 @@ export const createCursor = (
       if (selector !== undefined) {
         await actions.move(selector, {
           ...optionsResolved,
-          // apply moveDelay after click, but not after actual move
+          // No moveDelay during the actual move; applied after clicking
           moveDelay: 0
         })
       }
 
       try {
-        await delay(optionsResolved.hesitate)
+        await delay(optionsResolved.hesitate ?? 0)
         await page.mouse.down()
-        await delay(optionsResolved.waitForClick)
+        await delay(optionsResolved.waitForClick ?? 0)
         await page.mouse.up()
       } catch (error) {
         log('Warning: could not click mouse, error message:', error)
       }
 
-      await delay(optionsResolved.moveDelay * (optionsResolved.randomizeMoveDelay ? Math.random() : 1))
-
+      await delay((optionsResolved.moveDelay ?? 0) * ((optionsResolved.randomizeMoveDelay ?? false) ? Math.random() : 1))
       actions.toggleRandomMove(wasRandom)
     },
 
-    async move (
+    async move(
       selector: string | ElementHandle,
       options?: MoveOptions
     ): Promise<void> {
-      const optionsResolved = {
+      const optionsResolved: MoveOptions = {
         moveDelay: 0,
         maxTries: 10,
         overshootThreshold: 500,
         randomizeMoveDelay: true,
         ...defaultOptions?.move,
         ...options
-      } satisfies MoveOptions
+      }
 
       const wasRandom = !moving
 
       const go = async (iteration: number): Promise<void> => {
-        if (iteration > (optionsResolved.maxTries)) {
+        if (iteration > (optionsResolved.maxTries ?? 10)) {
           throw Error('Could not mouse-over element within enough tries')
         }
 
@@ -487,9 +402,9 @@ export const createCursor = (
         let elem: ElementHandle<Element> | null = null
         if (typeof selector === 'string') {
           if (selector.startsWith('//') || selector.startsWith('(//')) {
-            selector = `xpath/.${selector}`
+            const xpathSelector = `xpath=${selector}`
             if (optionsResolved.waitForSelector !== undefined) {
-              await page.waitForSelector(selector, {
+              await page.waitForSelector(xpathSelector, {
                 timeout: optionsResolved.waitForSelector
               })
             }
@@ -509,33 +424,23 @@ export const createCursor = (
             )
           }
         } else {
-          // ElementHandle
-          elem = selector
+          elem = selector as ElementHandle<Element>
         }
 
-        // Make sure the object is in view
-        const objectId = elem.remoteObject().objectId
-        if (objectId !== undefined) {
-          try {
-            await getCDPClient(page).send('DOM.scrollIntoViewIfNeeded', {
-              objectId
-            })
-          } catch (e) {
-            // use regular JS scroll method as a fallback
-            log('Falling back to JS scroll method', e)
-            await elem.evaluate((e) => e.scrollIntoView({ block: 'center' }))
-            await new Promise((resolve) => setTimeout(resolve, 2000)) // Wait a bit until the scroll has finished
-          }
+        // Scroll element into view
+        try {
+          await elem.evaluate((e) => e.scrollIntoView({ block: 'center' }))
+          await delay(2000)
+        } catch (e) {
+          log('Falling back to JS scroll method', e)
+          await elem.evaluate((e) => e.scrollIntoView({ block: 'center' }))
+          await delay(2000)
         }
         const box = await boundingBoxWithFallback(page, elem)
         const { height, width } = box
         const destination = getRandomBoxPoint(box, optionsResolved)
         const dimensions = { height, width }
-        const overshooting = shouldOvershoot(
-          previous,
-          destination,
-          optionsResolved.overshootThreshold
-        )
+        const overshooting = shouldOvershoot(previous, destination, optionsResolved.overshootThreshold ?? 500)
         const to = overshooting
           ? overshoot(destination, OVERSHOOT_RADIUS)
           : destination
@@ -547,53 +452,42 @@ export const createCursor = (
             ...optionsResolved,
             spreadOverride: OVERSHOOT_SPREAD
           })
-
           await tracePath(correction)
         }
 
         previous = destination
-
         actions.toggleRandomMove(true)
 
         const newBoundingBox = await boundingBoxWithFallback(page, elem)
-
-        // It's possible that the element that is being moved towards
-        // has moved to a different location by the time
-        // the the time the mouseover animation finishes
+        // If the element moved during the animation, try again
         if (!intersectsElement(to, newBoundingBox)) {
           return await go(iteration + 1)
         }
       }
       await go(0)
-
       actions.toggleRandomMove(wasRandom)
-
-      await delay(optionsResolved.moveDelay * (optionsResolved.randomizeMoveDelay ? Math.random() : 1))
+      await delay((optionsResolved.moveDelay ?? 0) * ((optionsResolved.randomizeMoveDelay ?? false) ? Math.random() : 1))
     },
 
-    async moveTo (destination: Vector, options?: MoveToOptions): Promise<void> {
-      const optionsResolved = {
+    async moveTo(destination: Vector, options?: MoveToOptions): Promise<void> {
+      const optionsResolved: MoveToOptions = {
         moveDelay: 0,
         randomizeMoveDelay: true,
         ...defaultOptions?.moveTo,
         ...options
-      } satisfies MoveToOptions
+      }
 
       const wasRandom = !moving
       actions.toggleRandomMove(false)
       await tracePath(path(previous, destination, optionsResolved))
       actions.toggleRandomMove(wasRandom)
-
-      await delay(optionsResolved.moveDelay * (optionsResolved.randomizeMoveDelay ? Math.random() : 1))
+      await delay((optionsResolved.moveDelay ?? 0) * ((optionsResolved.randomizeMoveDelay ?? false) ? Math.random() : 1))
     }
   }
 
-  // Start random mouse movements. Do not await the promise but return immediately
+  // Start random mouse movements if requested
   if (performRandomMoves) {
-    randomMove().then(
-      (_) => { },
-      (_) => { }
-    )
+    randomMove().catch(() => { })
   }
 
   return actions

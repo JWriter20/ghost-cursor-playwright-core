@@ -1,4 +1,4 @@
-import type { Page } from 'puppeteer-core'
+import type { Page } from 'patchright-core'
 import { type ClickOptions, createCursor, GhostCursor } from '../spoof'
 import { join } from 'path'
 import { promises as fs } from 'fs'
@@ -19,9 +19,7 @@ describe('Mouse movements', () => {
   beforeAll(async () => {
     await installMouseHelper(page)
     const html = await fs.readFile(join(__dirname, 'custom-page.html'), 'utf8')
-    await page.goto('data:text/html,' + encodeURIComponent(html), {
-      waitUntil: 'networkidle2'
-    })
+    await page.goto('data:text/html,' + encodeURIComponent(html), { waitUntil: 'networkidle' })
   })
 
   beforeEach(() => {
