@@ -1,4 +1,5 @@
 import type { ElementHandle, Page, CDPSession } from 'patchright-core'
+import type { ElementHandle as PlaywrightElementHandle, Page as PlaywrightPage, CDPSession as PlaywrightCDPSession } from 'playwright-core'
 import debug from 'debug'
 import {
   type Vector,
@@ -11,6 +12,7 @@ import {
   overshoot
 } from './math'
 export { default as installMouseHelper } from './mouse-helper'
+export { type Vector } from './math'
 
 const log = debug('ghost-cursor')
 
@@ -55,8 +57,8 @@ export interface MoveToOptions extends PathOptions, Pick<MoveOptions, 'moveDelay
 
 export interface GhostCursor {
   toggleRandomMove: (random: boolean) => void
-  click: (selector?: string | ElementHandle, options?: ClickOptions) => Promise<void>
-  move: (selector: string | ElementHandle, options?: MoveOptions) => Promise<void>
+  click: (selector?: string | ElementHandle | PlaywrightElementHandle, options?: ClickOptions) => Promise<void>
+  move: (selector: string | ElementHandle | PlaywrightElementHandle, options?: MoveOptions) => Promise<void>
   moveTo: (destination: Vector, options?: MoveToOptions) => Promise<void>
   getLocation: () => Vector
 }
@@ -103,15 +105,21 @@ const getRandomBoxPoint = (
 }
 
 /** Updated helper to create a CDP session in Playwright */
-const getCDPClient = async (page: Page): Promise<CDPSession> => {
+const getCDPClient = async (page: Page | PlaywrightPage): Promise<CDPSession | PlaywrightCDPSession> => {
   return await page.context().newCDPSession(page)
 }
 
 /** Get a random point on a browser page using viewport size instead of CDP target */
-export const getRandomPagePoint = async (page: Page): Promise<Vector> => {
-  const viewport = page.viewportSize()
+export const getRandomPagePoint = async (page: Page | PlaywrightPage): Promise<Vector> => {
+  let viewport = page.viewportSize()
   if (viewport == null) {
-    throw new Error('No viewport available')
+    viewport = await page.evaluate(() => ({
+      width: window.innerWidth,
+      height: window.innerHeight
+    }))
+    if (viewport == null) {
+      throw new Error('Could not get viewport size')
+    }
   }
   return getRandomBoxPoint({
     x: 0,
@@ -123,7 +131,7 @@ export const getRandomPagePoint = async (page: Page): Promise<Vector> => {
 
 /** Get the bounding box of an element. Uses getClientRects as a first try. */
 const getElementBox = async (
-  page: Page,
+  page: Page | PlaywrightPage,
   element: ElementHandle<Element>,
   relativeToMainFrame: boolean = true
 ): Promise<BoundingBox | null> => {
@@ -238,7 +246,7 @@ const intersectsElement = (vec: Vector, box: BoundingBox): boolean => {
 }
 
 const boundingBoxWithFallback = async (
-  page: Page,
+  page: Page | PlaywrightPage,
   elem: ElementHandle<Element>
 ): Promise<BoundingBox> => {
   let box = await getElementBox(page, elem)
@@ -249,7 +257,7 @@ const boundingBoxWithFallback = async (
 }
 
 export const createCursor = (
-  page: Page,
+  page: Page | PlaywrightPage,
   /**
    * Cursor start position.
    * @default { x: 0, y: 0 }
@@ -342,7 +350,7 @@ export const createCursor = (
     },
 
     async click(
-      selector?: string | ElementHandle,
+      selector?: string | ElementHandle | PlaywrightElementHandle,
       options?: ClickOptions
     ): Promise<void> {
       const optionsResolved: ClickOptions = {
@@ -379,7 +387,7 @@ export const createCursor = (
     },
 
     async move(
-      selector: string | ElementHandle,
+      selector: string | ElementHandle | PlaywrightElementHandle,
       options?: MoveOptions
     ): Promise<void> {
       const optionsResolved: MoveOptions = {
@@ -416,7 +424,8 @@ export const createCursor = (
                 timeout: optionsResolved.waitForSelector
               })
             }
-            elem = await page.$(selector)
+            const handle = await page.$(selector)
+            elem = handle as unknown as ElementHandle<Element>
           }
           if (elem === null) {
             throw new Error(

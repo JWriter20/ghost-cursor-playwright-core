@@ -1,6 +1,6 @@
 {
   "name": "@jwriter20/ghost-cursor-patchright-core",
-  "version": "1.3.0",
+  "version": "1.3.2",
   "description": "Move your mouse like a human in puppeteer or generate realistic movements on any 2D plane",
   "repository": "https://github.com/Xetera/ghost-cursor",
   "main": "lib/spoof.js",
