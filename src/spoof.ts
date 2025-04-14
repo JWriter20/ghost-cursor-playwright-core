@@ -129,44 +129,10 @@ export const getRandomPagePoint = async (page: Page | PlaywrightPage): Promise<V
   })
 }
 
-/** Get the bounding box of an element. Uses getClientRects as a first try. */
+/** Get the bounding box of an element relative to the main frame using boundingBox */
 const getElementBox = async (
-  page: Page | PlaywrightPage,
-  element: ElementHandle<Element>,
-  relativeToMainFrame: boolean = true
+  element: ElementHandle<Element>
 ): Promise<BoundingBox | null> => {
-  try {
-    const quads = await element.evaluate((el) => {
-      const rects = el.getClientRects()
-      if (rects.length > 0) {
-        const rect = rects[0]
-        return [rect.left, rect.top, rect.right, rect.bottom]
-      }
-      return null
-    })
-    if (quads != null) {
-      const elementBox: BoundingBox = {
-        x: quads[0],
-        y: quads[1],
-        width: quads[2] - quads[0],
-        height: quads[3] - quads[1]
-      }
-      if (!relativeToMainFrame) {
-        const elementFrame = await element.contentFrame()
-        if (elementFrame != null) {
-          const frameElement = await elementFrame.frameElement()
-          const boundingBox = await frameElement.boundingBox()
-          if (boundingBox != null) {
-            elementBox.x = elementBox.x - boundingBox.x
-            elementBox.y = elementBox.y - boundingBox.y
-          }
-        }
-      }
-      return elementBox
-    }
-  } catch (_) {
-    log('Could not get client rects, falling back to boundingBox')
-  }
   return await element.boundingBox()
 }
 
@@ -246,28 +212,18 @@ const intersectsElement = (vec: Vector, box: BoundingBox): boolean => {
 }
 
 const boundingBoxWithFallback = async (
-  page: Page | PlaywrightPage,
   elem: ElementHandle<Element>
 ): Promise<BoundingBox> => {
-  let box = await getElementBox(page, elem)
+  const box = await getElementBox(elem)
   if (box == null) {
-    box = (await elem.evaluate((el: Element) => el.getBoundingClientRect())) as BoundingBox
+    throw new Error('Element is not visible')
   }
   return box
 }
 
 export const createCursor = (
   page: Page | PlaywrightPage,
-  /**
-   * Cursor start position.
-   * @default { x: 0, y: 0 }
-   */
   start: Vector = origin,
-  /**
-   * Initially perform random movements.
-   * If `move`, `click`, etc. is performed, these random movements end.
-   * @default false
-   */
   performRandomMoves: boolean = false,
   defaultOptions: {
     randomMove?: RandomMoveOptions
@@ -279,11 +235,8 @@ export const createCursor = (
   const OVERSHOOT_SPREAD = 10
   const OVERSHOOT_RADIUS = 120
   let previous: Vector = start
-
-  // Initial state: mouse is not moving
   let moving: boolean = false
 
-  // Move the mouse over a number of vectors
   const tracePath = async (
     vectors: Iterable<Vector | TimedVector>,
     abortOnMove: boolean = false
@@ -292,7 +245,6 @@ export const createCursor = (
 
     for (const v of vectors) {
       try {
-        // Abort if random movements are running and a new move is triggered
         if (abortOnMove && moving) {
           return
         }
@@ -310,15 +262,12 @@ export const createCursor = (
         await cdpClient.send('Input.dispatchMouseEvent', dispatchParams)
         previous = v
       } catch (error) {
-        // Exit function if the page is closed
         if (page.isClosed()) return
-
         log('Warning: could not move mouse, error message:', error)
       }
     }
   }
 
-  // Start random mouse movements (recursive)
   const randomMove = async (options?: RandomMoveOptions): Promise<void> => {
     const optionsResolved: RandomMoveOptions = {
       moveDelay: 2000,
@@ -365,25 +314,68 @@ export const createCursor = (
       const wasRandom = !moving
       actions.toggleRandomMove(false)
 
-      if (selector !== undefined) {
-        await actions.move(selector, {
-          ...optionsResolved,
-          // No moveDelay during the actual move; applied after clicking
-          moveDelay: 0
-        })
-      }
-
+      let element: ElementHandle<HTMLElement>
       try {
-        await delay(optionsResolved.hesitate ?? 0)
-        await page.mouse.down()
-        await delay(optionsResolved.waitForClick ?? 0)
-        await page.mouse.up()
-      } catch (error) {
-        log('Warning: could not click mouse, error message:', error)
-      }
+        if (selector !== undefined) {
+          if (typeof selector === 'string') {
+            element = await page.waitForSelector(selector, { timeout: 5000 }) as ElementHandle<HTMLElement>
+          } else {
+            element = selector as ElementHandle<HTMLElement>
+          }
 
-      await delay((optionsResolved.moveDelay ?? 0) * ((optionsResolved.randomizeMoveDelay ?? false) ? Math.random() : 1))
-      actions.toggleRandomMove(wasRandom)
+          const boundingBox = await element.boundingBox()
+          if (boundingBox == null) throw new Error('Unable to retrieve bounding box of the element')
+
+          try {
+            await actions.move(element, { paddingPercentage: 75, ...optionsResolved, moveDelay: 0 })
+          } catch {
+            await actions.moveTo(boundingBox, optionsResolved)
+          }
+
+          const cursorPos = actions.getLocation()
+          const offset = {
+            x: cursorPos.x - boundingBox.x,
+            y: cursorPos.y - boundingBox.y
+          }
+
+          await element.hover({ force: true, position: offset })
+          await delay(100)
+
+          const performClick = async (clickFunc: () => Promise<void>): Promise<void> => {
+            await clickFunc()
+            await page.waitForLoadState('load', { timeout: 5000 })
+          }
+
+          try {
+            await performClick(async () =>
+              await element.click({
+                force: true,
+                position: offset,
+                delay: optionsResolved.waitForClick ?? 0,
+                timeout: 1500
+              })
+            )
+          } catch (e) {
+            await performClick(async () => await element.evaluate((el) => el.click()))
+          }
+        } else {
+          const clickOptions = optionsResolved.waitForClick != null
+            ? { delay: optionsResolved.waitForClick }
+            : undefined
+          const location = actions.getLocation()
+          await page.mouse.click(location.x, location.y, clickOptions)
+        }
+      } catch (error: unknown) {
+        const errorMessage = error instanceof Error ? error.message : String(error)
+        log('Warning: could not perform click, error message:', errorMessage)
+        throw new Error(`Failed to click element: ${selector?.toString() ?? 'unknown'}. Error: ${errorMessage}`)
+      } finally {
+        await delay(
+          (optionsResolved.moveDelay ?? 0) *
+          ((optionsResolved.randomizeMoveDelay ?? false) ? Math.random() : 1)
+        )
+        actions.toggleRandomMove(wasRandom)
+      }
     },
 
     async move(
@@ -436,7 +428,6 @@ export const createCursor = (
           elem = selector as ElementHandle<Element>
         }
 
-        // Scroll element into view
         try {
           await elem.evaluate((e) => e.scrollIntoView({ block: 'center' }))
           await delay(2000)
@@ -445,7 +436,7 @@ export const createCursor = (
           await elem.evaluate((e) => e.scrollIntoView({ block: 'center' }))
           await delay(2000)
         }
-        const box = await boundingBoxWithFallback(page, elem)
+        const box = await boundingBoxWithFallback(elem)
         const { height, width } = box
         const destination = getRandomBoxPoint(box, optionsResolved)
         const dimensions = { height, width }
@@ -467,8 +458,7 @@ export const createCursor = (
         previous = destination
         actions.toggleRandomMove(true)
 
-        const newBoundingBox = await boundingBoxWithFallback(page, elem)
-        // If the element moved during the animation, try again
+        const newBoundingBox = await boundingBoxWithFallback(elem)
         if (!intersectsElement(to, newBoundingBox)) {
           return await go(iteration + 1)
         }
@@ -494,7 +484,6 @@ export const createCursor = (
     }
   }
 
-  // Start random mouse movements if requested
   if (performRandomMoves) {
     randomMove().catch(() => { })
   }

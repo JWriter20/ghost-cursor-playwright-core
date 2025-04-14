@@ -5,8 +5,8 @@ import type { Page as PlaywrightPage } from 'playwright-core'
  * This injects a box into the page that moves with the mouse.
  * Useful for debugging.
  */
-async function installMouseHelper(page: Page | PlaywrightPage): Promise<void> {
-  await page.addInitScript(() => {
+async function installMouseHelper (page: Page | PlaywrightPage): Promise<void> {
+  await page.evaluate(() => {
     const attachListener = (): void => {
       const box = document.createElement('p-mouse-pointer')
       const styleElement = document.createElement('style')
@@ -97,7 +97,7 @@ async function installMouseHelper(page: Page | PlaywrightPage): Promise<void> {
         true
       )
 
-      function updateButtons(buttons: number): void {
+      function updateButtons (buttons: number): void {
         for (let i = 0; i < 5; i++) {
           box.classList.toggle(`button-${i}`, Boolean(buttons & (1 << i)))
         }
