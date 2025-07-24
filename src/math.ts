@@ -95,3 +95,14 @@ export const bezierCurveSpeed = (
   const B2 = 3 * (1 - t) ** 2 * (P1.y - P0.y) + 6 * (1 - t) * t * (P2.y - P1.y) + 3 * t ** 2 * (P3.y - P2.y)
   return Math.sqrt(B1 ** 2 + B2 ** 2)
 }
+
+// New: Add noise to vector for jitter
+export const addNoise = (v: Vector, scale: number): Vector => ({
+  x: v.x + (Math.random() * 2 - 1) * scale,
+  y: v.y + (Math.random() * 2 - 1) * scale
+})
+
+// New: Ease-in-out cubic for acceleration/deceleration
+export const easeInOutCubic = (t: number): number => {
+  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2
+}

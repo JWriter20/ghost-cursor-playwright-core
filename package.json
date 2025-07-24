@@ -1,7 +1,7 @@
 {
   "name": "ghost-cursor-patchright-core",
-  "version": "1.3.8",
-  "description": "Move your mouse like a human in puppeteer or generate realistic movements on any 2D plane",
+  "version": "1.3.13",
+  "description": "Move your mouse like a human in puppeteer and playwright or generate realistic movements on any 2D plane",
   "repository": "https://github.com/Xetera/ghost-cursor",
   "main": "lib/spoof.js",
   "types": "lib/spoof.d.ts",
@@ -16,7 +16,7 @@
     "mouse-movement",
     "botting"
   ],
-  "author": "Xetera & Jake writer",
+  "author": "Xetera & Jake writer (patches)",
   "license": "ISC",
   "files": [
     "lib/**/*"

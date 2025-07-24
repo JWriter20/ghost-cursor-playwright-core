@@ -1,31 +1,161 @@
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Document</title>
-  </head>
-  <body style="width: 1000px; height: 1000px">
-    <div
-      id="box"
-      style="
-        left: 200;
-        top: 40;
+
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Document</title>
+  <style>
+    .click-counter {
+      position: absolute;
+      font-size: 12px;
+      color: white;
+      background: rgba(0, 0, 0, 0.8);
+      padding: 2px 5px;
+      border-radius: 3px;
+      top: -20px;
+      left: 0;
+      min-width: 20px;
+      text-align: center;
+    }
+  </style>
+</head>
+
+<body style="width: 1000px; height: 1000px">
+  <!-- Original moving box -->
+  <div id="box" style="
+        left: 200px;
+        top: 40px;
         position: absolute;
         transition: all 0.4s;
         width: 50px;
         height: 50px;
         background: #eee;
-      "
-    ></div>
-  </body>
-  <script>
-    const box = document.querySelector('#box')
-    setTimeout(() => {
-      box.style.left = Math.random() * 500
-    }, 1000)
-    setTimeout(() => {
-      box.style.top = Math.random() * 500
-    }, 1000)
-  </script>
+      ">
+    <div class="click-counter" id="box-counter">0</div>
+  </div>
+
+  <!-- Adjacent elements test -->
+  <div id="left-box" style="
+        left: 100px;
+        top: 200px;
+        position: absolute;
+        width: 50px;
+        height: 50px;
+        background: #ff6b6b;
+      ">
+    <div class="click-counter" id="left-counter">0</div>
+  </div>
+
+  <div id="right-box" style="
+        left: 150px;
+        top: 200px;
+        position: absolute;
+        width: 50px;
+        height: 50px;
+        background: #4ecdc4;
+      ">
+    <div class="click-counter" id="right-counter">0</div>
+  </div>
+
+  <!-- Moving element during click test -->
+  <div id="moving-box" style="
+        left: 300px;
+        top: 350px;
+        position: absolute;
+        width: 60px;
+        height: 60px;
+        background: #45b7d1;
+        transition: left 0.3s ease-out;
+      ">
+    <div class="click-counter" id="moving-counter">0</div>
+  </div>
+
+  <!-- Small elements test -->
+  <div id="small-box" style="
+        left: 500px;
+        top: 100px;
+        position: absolute;
+        width: 20px;
+        height: 20px;
+        background: #96ceb4;
+      ">
+    <div class="click-counter" id="small-counter">0</div>
+  </div>
+
+  <!-- Test results display -->
+  <div id="test-results" style="position: absolute; top: 500px; left: 50px; font-family: monospace;">
+    <h3>Click Test Results:</h3>
+    <div id="results-content"></div>
+  </div>
+</body>
+<script>
+  // Click counters
+  const clickCounters = {
+    'box': 0,
+    'left-box': 0,
+    'right-box': 0,
+    'moving-box': 0,
+    'small-box': 0
+  };
+
+  // Add click listeners to all boxes
+  document.querySelectorAll('div[id$="-box"], #box').forEach(box => {
+    box.addEventListener('click', (e) => {
+      e.stopPropagation();
+      clickCounters[box.id]++;
+      const counter = document.getElementById(box.id.replace('-box', '').replace('box', 'box') + '-counter');
+      if (counter) {
+        counter.textContent = clickCounters[box.id];
+      }
+      updateResults();
+    });
+  });
+
+  // Update results display
+  function updateResults() {
+    const resultsDiv = document.getElementById('results-content');
+    resultsDiv.innerHTML = Object.entries(clickCounters)
+      .map(([id, count]) => `${id}: ${count} clicks`)
+      .join('<br>');
+  }
+
+  // Original moving box behavior
+  const box = document.querySelector('#box');
+  setTimeout(() => {
+    box.style.left = Math.random() * 500 + 'px';
+  }, 1000);
+  setTimeout(() => {
+    box.style.top = Math.random() * 500 + 'px';
+  }, 1000);
+
+  // Moving box behavior - moves when hovered/approached
+  const movingBox = document.querySelector('#moving-box');
+  let moveTimeout;
+
+  // Function to trigger movement of the moving box
+  window.triggerMovingBoxMove = function () {
+    clearTimeout(moveTimeout);
+    moveTimeout = setTimeout(() => {
+      const newLeft = Math.random() * 400 + 100;
+      movingBox.style.left = newLeft + 'px';
+    }, 100); // Small delay to simulate movement during click
+  };
+
+  // Reset function for tests
+  window.resetClickCounters = function () {
+    Object.keys(clickCounters).forEach(key => {
+      clickCounters[key] = 0;
+      const counter = document.getElementById(key.replace('-box', '').replace('box', 'box') + '-counter');
+      if (counter) {
+        counter.textContent = '0';
+      }
+    });
+    updateResults();
+  };
+
+  // Initialize results display
+  updateResults();
+</script>
+
 </html>
