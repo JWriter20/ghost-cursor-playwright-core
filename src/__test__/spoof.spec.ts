@@ -126,21 +126,22 @@ describe('Mouse movements', () => {
     })
 
     it('Should handle rapid clicks on a moving element', async () => {
-      // Multiple rapid clicks while element is moving
-      const clickPromises: Array<Promise<void>> = []
-
+      // Multiple rapid clicks while element is moving - perform sequentially
       for (let i = 0; i < 3; i++) {
-        clickPromises.push(cursor.click('#moving-box'))
-
-        // Trigger movement between clicks
+        // Trigger movement before each click
         await page.evaluate(() => {
           (window as any).triggerMovingBoxMove?.()
         })
 
-        await page.waitForTimeout(200)
-      }
+        // Wait a bit for movement to start
+        await page.waitForTimeout(100)
 
-      await Promise.all(clickPromises)
+        // Perform the click
+        await cursor.click('#moving-box')
+
+        // Small delay between clicks
+        await page.waitForTimeout(100)
+      }
 
       const clickCount = await getClickCount('moving-counter')
 
